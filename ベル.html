@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>スイッチ操作</title>
+
+<style>
+
+/* ========================================
+   基本設定
+======================================== */
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    min-height: 100%;
+}
+
+body {
+    min-height: 100vh;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    font-family:
+        "Noto Sans JP",
+        "Yu Gothic",
+        "Hiragino Kaku Gothic ProN",
+        sans-serif;
+
+    /* 白基調のシンプルな背景 */
+    background: #f5f5f5;
+
+    color: #333;
+
+    overflow-x: hidden;
+}
+
+
+/* ========================================
+   ページ
+======================================== */
+
+.page {
+    width: 100%;
+    padding: 50px 20px;
+}
+
+
+/* タイトル */
+
+.title {
+    text-align: center;
+
+    margin-bottom: 45px;
+
+    font-size: 26px;
+    font-weight: 600;
+
+    letter-spacing: 0.12em;
+
+    color: #333;
+}
+
+
+/* ========================================
+   スイッチ2台
+======================================== */
+
+.switch-container {
+    display: flex;
+
+    justify-content: center;
+    align-items: flex-start;
+
+    gap: 70px;
+
+    flex-wrap: wrap;
+}
+
+
+/* ========================================
+   スイッチ本体
+======================================== */
+
+.switch {
+    position: relative;
+
+    width: 429px;
+    height: 640px;
+
+    /*
+     * スイッチ自体には
+     * 浮き上がりアニメーションを付けない
+     */
+    transform: none;
+
+    transition: none;
+}
+
+
+/*
+ * マウスを乗せても何も変化しない
+ */
+.switch:hover {
+    transform: none;
+}
+
+
+/* スイッチ画像 */
+
+.switch-image {
+    display: block;
+
+    width: 429px;
+    height: 640px;
+
+    user-select: none;
+    -webkit-user-drag: none;
+
+    pointer-events: none;
+}
+
+
+/* ========================================
+   ONボタン
+======================================== */
+
+.on-button {
+    position: absolute;
+
+    /*
+     * 元画像より少し上に調整
+     */
+    left: 176px;
+    top: 265px;
+
+    width: 84px;
+    height: 84px;
+
+    padding: 0;
+
+    border: none;
+    border-radius: 6px;
+
+    cursor: pointer;
+
+    background: #050505;
+
+    color: #eeeeee;
+
+    font-family: Arial, sans-serif;
+    font-size: 39px;
+    font-weight: 300;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    /*
+     * 通常時
+     */
+    transform: translateY(0);
+
+    box-shadow:
+        inset 0 1px 2px rgba(255,255,255,0.15),
+        inset 0 -3px 4px rgba(0,0,0,0.8),
+        0 1px 2px rgba(0,0,0,0.8);
+
+    transition:
+        transform 0.08s ease,
+        box-shadow 0.08s ease;
+
+    user-select: none;
+}
+
+
+/*
+ * ONを押している状態
+ *
+ * mel.mp3が再生されている間、
+ * この状態を維持する
+ */
+
+.on-button.pressed {
+
+    transform:
+        translateY(2px)
+        scale(0.96);
+
+    box-shadow:
+        inset 0 4px 6px rgba(0,0,0,0.9),
+        inset 0 -1px 2px rgba(255,255,255,0.08),
+        0 0 1px rgba(0,0,0,0.8);
+}
+
+
+/* ========================================
+   OFFボタン
+======================================== */
+
+.off-button {
+    position: absolute;
+
+    /*
+     * ONとの位置関係を維持しつつ
+     * 少し上に調整
+     */
+    left: 176px;
+    top: 380px;
+
+    width: 84px;
+    height: 84px;
+
+    padding: 0;
+
+    border: none;
+    border-radius: 6px;
+
+    cursor: pointer;
+
+    background: #d40000;
+
+    color: white;
+
+    font-family: Arial, sans-serif;
+    font-size: 36px;
+    font-weight: 300;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    box-shadow:
+        inset 0 1px 2px rgba(255,255,255,0.15),
+        inset 0 -3px 4px rgba(100,0,0,0.8),
+        0 1px 2px rgba(0,0,0,0.8);
+
+    transition:
+        transform 0.08s ease,
+        box-shadow 0.08s ease;
+
+    user-select: none;
+}
+
+
+/*
+ * OFFボタンは実際に押している瞬間だけ沈む
+ */
+
+.off-button:active {
+
+    transform:
+        translateY(-2px)
+        scale(0.96);
+
+    box-shadow:
+        inset 0 4px 6px rgba(80,0,0,0.9),
+        inset 0 -1px 2px rgba(255,255,255,0.08);
+}
+
+
+/* ========================================
+   状態表示
+======================================== */
+
+.status {
+    position: absolute;
+
+    bottom: -42px;
+
+    left: 50%;
+
+    transform: translateX(-50%);
+
+    min-width: 90px;
+
+    padding: 6px 16px;
+
+    text-align: center;
+
+    border-radius: 15px;
+
+    background: #eeeeee;
+
+    color: #777;
+
+    font-size: 13px;
+
+    letter-spacing: 0.08em;
+
+    border: 1px solid #dddddd;
+}
+
+
+/* ON状態 */
+
+.switch.is-on .status {
+    color: #267a35;
+    background: #eef8ef;
+    border-color: #c8e5cc;
+}
+
+
+/* ========================================
+   スマートフォン対応
+======================================== */
+
+@media (max-width: 1000px) {
+
+    .switch-container {
+        gap: 70px;
+    }
+
+}
+
+
+@media (max-width: 520px) {
+
+    .page {
+        padding: 30px 10px;
+    }
+
+    .title {
+        font-size: 22px;
+        margin-bottom: 35px;
+    }
+
+    .switch {
+        transform: scale(0.78);
+        transform-origin: center top;
+
+        margin-bottom: -130px;
+    }
+
+    /*
+     * スマホでもホバーによる変化なし
+     */
+    .switch:hover {
+        transform: scale(0.78);
+    }
+
+}
+
+
+/* ========================================
+   スマホでタップした際の
+   青いハイライトを消す
+======================================== */
+
+button {
+    -webkit-tap-highlight-color: transparent;
+}
+
+</style>
+</head>
+
+
+<body>
+
+<div class="page">
+
+    <div class="title">
+        スイッチ操作
+    </div>
+
+
+    <div class="switch-container">
+
+
+        <!-- =================================
+             上り
+        ================================== -->
+
+        <div class="switch" id="nobori">
+
+            <img
+                class="switch-image"
+                src="上り.png"
+                alt="上りスイッチ"
+            >
+
+            <button
+                class="on-button"
+                aria-label="上り ON"
+            >
+                ON
+            </button>
+
+            <button
+                class="off-button"
+                aria-label="上り OFF"
+            >
+                OFF
+            </button>
+
+            <div class="status">
+                OFF
+            </div>
+
+        </div>
+
+
+        <!-- =================================
+             下り
+        ================================== -->
+
+        <div class="switch" id="kudari">
+
+            <img
+                class="switch-image"
+                src="下り.png"
+                alt="下りスイッチ"
+            >
+
+            <button
+                class="on-button"
+                aria-label="下り ON"
+            >
+                ON
+            </button>
+
+            <button
+                class="off-button"
+                aria-label="下り OFF"
+            >
+                OFF
+            </button>
+
+            <div class="status">
+                OFF
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<script>
+
+/* ========================================
+   音声
+======================================== */
+
+const mel = new Audio("mel.mp3");
+const cls = new Audio("cls.mp3");
+
+mel.preload = "auto";
+cls.preload = "auto";
+
+
+/* ========================================
+   スイッチ
+======================================== */
+
+const switches = document.querySelectorAll(".switch");
+
+
+switches.forEach((switchElement) => {
+
+    const onButton =
+        switchElement.querySelector(".on-button");
+
+    const offButton =
+        switchElement.querySelector(".off-button");
+
+    const status =
+        switchElement.querySelector(".status");
+
+
+    /*
+    ========================================
+     ON
+    ========================================
+    */
+
+    onButton.addEventListener("click", async () => {
+
+        /*
+         * すでにONなら何もしない
+         */
+        if (onButton.classList.contains("pressed")) {
+            return;
+        }
+
+
+        /*
+         * ONボタンを押し込んだ状態にする
+         */
+        onButton.classList.add("pressed");
+
+
+        /*
+         * cls.mp3が再生中なら停止
+         */
+        cls.pause();
+        cls.currentTime = 0;
+
+
+        /*
+         * mel.mp3を最初から再生
+         */
+        mel.pause();
+        mel.currentTime = 0;
+
+        mel.loop = true;
+
+
+        try {
+
+            await mel.play();
+
+            switchElement.classList.add("is-on");
+
+            status.textContent = "ON";
+
+        } catch (error) {
+
+            /*
+             * 再生できなかった場合は
+             * ON状態を解除
+             */
+            onButton.classList.remove("pressed");
+
+            console.error(
+                "mel.mp3を再生できませんでした:",
+                error
+            );
+
+        }
+
+    });
+
+
+    /*
+    ========================================
+     OFF
+    ========================================
+    */
+
+    offButton.addEventListener("click", async () => {
+
+        /*
+         * 現在ON状態か確認
+         */
+        const wasOn =
+            onButton.classList.contains("pressed");
+
+
+        /*
+         * ON状態だった場合のみ
+         * mel.mp3を停止
+         */
+        if (wasOn) {
+
+            mel.pause();
+            mel.currentTime = 0;
+
+        }
+
+
+        /*
+         * ONボタンを元に戻す
+         */
+        onButton.classList.remove("pressed");
+
+
+        /*
+         * 状態をOFFにする
+         */
+        switchElement.classList.remove("is-on");
+
+        status.textContent = "OFF";
+
+
+        /*
+         * ON → OFF の場合のみ
+         * cls.mp3を再生
+         */
+        if (wasOn) {
+
+            cls.pause();
+            cls.currentTime = 0;
+
+            try {
+
+                await cls.play();
+
+            } catch (error) {
+
+                console.error(
+                    "cls.mp3を再生できませんでした:",
+                    error
+                );
+
+            }
+
+        }
+
+    });
+
+});
+
+</script>
+
+</body>
+</html>
