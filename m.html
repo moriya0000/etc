@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>RAILWAY SIMULATOR</title>
+
+  <style>
+    /* =========================================
+       基本設定
+    ========================================= */
+
+    :root {
+      --bg: #eee4d4;
+      --bg-light: #f7f1e8;
+      --brown: #6f5945;
+      --brown-dark: #30261f;
+      --brown-light: #a48d73;
+      --line: rgba(82, 62, 45, 0.18);
+      --white: #fffaf3;
+      --accent: #b47b4d;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--brown-dark);
+      font-family:
+        "Helvetica Neue",
+        "Noto Sans JP",
+        Arial,
+        sans-serif;
+      overflow-x: hidden;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    /* =========================================
+       オープニング
+    ========================================= */
+
+    #opening {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+
+      display: flex;
+      justify-content: center;
+      align-items: center;
+
+      background: var(--brown-dark);
+      color: var(--white);
+
+      animation: openingHide 1.2s ease 2.8s forwards;
+      pointer-events: none;
+    }
+
+    .opening-inner {
+      text-align: center;
+      overflow: hidden;
+    }
+
+    .opening-line {
+      width: 0;
+      height: 1px;
+      margin: 0 auto 28px;
+      background: #d8c6ae;
+
+      animation: lineOpen 1.2s cubic-bezier(.77,0,.18,1) .2s forwards;
+    }
+
+    .opening-logo {
+      font-family: Georgia, serif;
+      font-size: clamp(42px, 8vw, 92px);
+      letter-spacing: .12em;
+      font-weight: 400;
+
+      opacity: 0;
+      transform: translateY(30px);
+
+      animation:
+        textIn 1s cubic-bezier(.16,1,.3,1) .8s forwards;
+    }
+
+    .opening-sub {
+      margin-top: 18px;
+
+      font-size: 11px;
+      letter-spacing: .45em;
+      color: #cdbca6;
+
+      opacity: 0;
+
+      animation: fadeIn 1s ease 1.5s forwards;
+    }
+
+    @keyframes lineOpen {
+      to {
+        width: min(360px, 60vw);
+      }
+    }
+
+    @keyframes textIn {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes fadeIn {
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes openingHide {
+      to {
+        opacity: 0;
+        visibility: hidden;
+      }
+    }
+
+    /* =========================================
+       ナビゲーション
+    ========================================= */
+
+    header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      z-index: 100;
+
+      padding: 22px 5vw;
+
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+
+      background: rgba(238, 228, 212, .78);
+      backdrop-filter: blur(14px);
+
+      border-bottom: 1px solid rgba(82, 62, 45, .08);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+
+      font-family: Georgia, serif;
+      letter-spacing: .08em;
+      font-size: 18px;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+
+      border: 1px solid var(--brown);
+      border-radius: 50%;
+
+      display: grid;
+      place-items: center;
+
+      font-size: 13px;
+    }
+
+    nav {
+      display: flex;
+      gap: 34px;
+      font-size: 12px;
+      letter-spacing: .14em;
+    }
+
+    nav a {
+      position: relative;
+      padding-bottom: 5px;
+    }
+
+    nav a::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      bottom: 0;
+
+      width: 0;
+      height: 1px;
+
+      background: var(--brown);
+
+      transition: width .3s ease;
+    }
+
+    nav a:hover::after {
+      width: 100%;
+    }
+
+    /* =========================================
+       HERO
+    ========================================= */
+
+    .hero {
+      min-height: 100vh;
+      padding: 150px 7vw 80px;
+
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      align-items: center;
+      gap: 60px;
+
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* 背景のレール */
+
+    .rail-background {
+      position: absolute;
+      left: -10%;
+      right: -10%;
+      bottom: -30px;
+
+      height: 280px;
+
+      opacity: .17;
+
+      transform: perspective(500px) rotateX(55deg);
+
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          transparent 0 38px,
+          var(--brown-dark) 39px 41px
+        );
+    }
+
+    .rail-background::before,
+    .rail-background::after {
+      content: "";
+      position: absolute;
+
+      top: 0;
+      bottom: 0;
+
+      width: 3px;
+
+      background: var(--brown-dark);
+    }
+
+    .rail-background::before {
+      left: 35%;
+    }
+
+    .rail-background::after {
+      right: 35%;
+    }
+
+    .hero-copy {
+      position: relative;
+      z-index: 2;
+
+      animation: heroIn 1.2s cubic-bezier(.16,1,.3,1) 3s both;
+    }
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+
+      font-size: 11px;
+      letter-spacing: .3em;
+      color: var(--brown);
+
+      margin-bottom: 28px;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 42px;
+      height: 1px;
+      background: var(--brown);
+    }
+
+    h1 {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(52px, 7vw, 105px);
+      line-height: .92;
+      font-weight: 400;
+      letter-spacing: -.045em;
+    }
+
+    h1 span {
+      display: block;
+      color: var(--brown);
+    }
+
+    .hero-description {
+      max-width: 520px;
+
+      margin-top: 35px;
+
+      font-size: 14px;
+      line-height: 2;
+      color: #6e6257;
+    }
+
+    .hero-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 20px;
+
+      margin-top: 42px;
+      padding: 16px 22px;
+
+      border: 1px solid var(--brown);
+      color: var(--brown-dark);
+
+      font-size: 11px;
+      letter-spacing: .2em;
+
+      transition:
+        background .35s ease,
+        color .35s ease,
+        transform .35s ease;
+    }
+
+    .hero-button:hover {
+      background: var(--brown-dark);
+      color: var(--white);
+      transform: translateY(-3px);
+    }
+
+    .arrow {
+      font-size: 18px;
+      transition: transform .3s ease;
+    }
+
+    .hero-button:hover .arrow {
+      transform: translateX(6px);
+    }
+
+    /* =========================================
+       車両ビジュアル
+    ========================================= */
+
+    .train-visual {
+      position: relative;
+      height: 430px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      animation: trainIn 1.4s cubic-bezier(.16,1,.3,1) 3.2s both;
+    }
+
+    .train-card {
+      position: relative;
+
+      width: min(540px, 100%);
+      height: 310px;
+
+      border-radius: 4px;
+
+      background:
+        linear-gradient(
+          135deg,
+          #d5c2aa,
+          #f5ecdf 45%,
+          #c4ae92
+        );
+
+      box-shadow:
+        30px 35px 80px rgba(68, 48, 32, .20);
+
+      transform: rotate(-4deg);
+      overflow: hidden;
+    }
+
+    .train-card::before {
+      content: "";
+
+      position: absolute;
+      inset: 0;
+
+      background:
+        linear-gradient(
+          115deg,
+          transparent 30%,
+          rgba(255,255,255,.45) 48%,
+          transparent 65%
+        );
+
+      animation: shine 5s ease-in-out infinite;
+    }
+
+    .train-window {
+      position: absolute;
+
+      top: 65px;
+      left: 65px;
+      right: 65px;
+
+      height: 110px;
+
+      background:
+        linear-gradient(
+          135deg,
+          #514b44,
+          #242322
+        );
+
+      border-radius: 6px;
+
+      box-shadow:
+        inset 0 0 0 6px rgba(255,255,255,.08);
+    }
+
+    .train-window::after {
+      content: "";
+
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+
+      background:
+        linear-gradient(
+          120deg,
+          transparent 35%,
+          rgba(255,255,255,.18),
+          transparent 60%
+        );
+    }
+
+    .train-body-line {
+      position: absolute;
+
+      left: 0;
+      right: 0;
+      top: 205px;
+
+      height: 13px;
+
+      background: var(--brown);
+    }
+
+    .train-front {
+      position: absolute;
+
+      bottom: 0;
+      left: 0;
+      right: 0;
+
+      height: 88px;
+
+      background: #4b3e32;
+    }
+
+    .headlight {
+      position: absolute;
+
+      right: 50px;
+      bottom: 28px;
+
+      width: 24px;
+      height: 24px;
+
+      border-radius: 50%;
+      background: #e9d5ad;
+
+      box-shadow:
+        0 0 30px rgba(255, 224, 166, .8);
+    }
+
+    .wheel {
+      position: absolute;
+
+      bottom: -35px;
+
+      width: 70px;
+      height: 70px;
+
+      border-radius: 50%;
+
+      background: #302a25;
+      border: 10px solid #655648;
+    }
+
+    .wheel.one {
+      left: 80px;
+    }
+
+    .wheel.two {
+      right: 80px;
+    }
+
+    @keyframes shine {
+      0%, 100% {
+        transform: translateX(-30%);
+      }
+
+      50% {
+        transform: translateX(30%);
+      }
+    }
+
+    @keyframes heroIn {
+      from {
+        opacity: 0;
+        transform: translateY(40px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes trainIn {
+      from {
+        opacity: 0;
+        transform: translateX(80px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    /* =========================================
+       セクション共通
+    ========================================= */
+
+    section {
+      padding: 120px 7vw;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+
+      margin-bottom: 50px;
+
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 22px;
+    }
+
+    .section-number {
+      font-family: Georgia, serif;
+      font-size: 13px;
+      color: var(--brown-light);
+      letter-spacing: .2em;
+    }
+
+    .section-title {
+      font-family: Georgia, serif;
+      font-size: clamp(35px, 4vw, 58px);
+      font-weight: 400;
+    }
+
+    .section-description {
+      max-width: 330px;
+
+      font-size: 12px;
+      line-height: 1.9;
+      color: #796d60;
+    }
+
+    /* =========================================
+       最新情報
+    ========================================= */
+
+    .news {
+      background: var(--bg-light);
+    }
+
+    .news-list {
+      border-top: 1px solid var(--line);
+    }
+
+    .news-item {
+      display: grid;
+      grid-template-columns: 150px 1fr 100px;
+
+      align-items: center;
+
+      padding: 27px 10px;
+
+      border-bottom: 1px solid var(--line);
+
+      transition:
+        background .3s ease,
+        padding .3s ease;
+    }
+
+    .news-item:hover {
+      background: #eee4d7;
+      padding-left: 20px;
+      padding-right: 20px;
+    }
+
+    .news-date {
+      font-size: 11px;
+      letter-spacing: .12em;
+      color: #958372;
+    }
+
+    .news-title {
+      font-size: 14px;
+    }
+
+    .news-tag {
+      justify-self: end;
+
+      padding: 6px 10px;
+
+      border: 1px solid #cdbba5;
+
+      font-size: 9px;
+      letter-spacing: .12em;
+      color: var(--brown);
+    }
+
+    /* =========================================
+       データ一覧
+    ========================================= */
+
+    .data-section {
+      background: var(--brown-dark);
+      color: var(--white);
+    }
+
+    .data-section .section-number,
+    .data-section .section-description {
+      color: #b7a796;
+    }
+
+    .data-section .section-header {
+      border-color: rgba(255,255,255,.15);
+    }
+
+    .data-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+
+      background: rgba(255,255,255,.12);
+      border: 1px solid rgba(255,255,255,.12);
+    }
+
+    .data-card {
+      min-height: 240px;
+
+      padding: 35px;
+
+      background: #382e27;
+
+      position: relative;
+      overflow: hidden;
+
+      transition:
+        background .4s ease,
+        transform .4s ease;
+    }
+
+    .data-card:hover {
+      background: #4a3b30;
+      transform: translateY(-5px);
+    }
+
+    .data-icon {
+      font-size: 30px;
+      margin-bottom: 55px;
+    }
+
+    .data-card h3 {
+      font-family: Georgia, serif;
+      font-size: 25px;
+      font-weight: 400;
+      margin-bottom: 10px;
+    }
+
+    .data-card p {
+      font-size: 11px;
+      line-height: 1.8;
+      color: #bcae9e;
+    }
+
+    .data-arrow {
+      position: absolute;
+
+      right: 28px;
+      bottom: 28px;
+
+      font-size: 20px;
+
+      transition: transform .3s ease;
+    }
+
+    .data-card:hover .data-arrow {
+      transform: translate(5px, -5px);
+    }
+
+    /* =========================================
+       SNS
+    ========================================= */
+
+    .sns-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .sns-card {
+      min-height: 190px;
+
+      padding: 30px;
+
+      border: 1px solid var(--line);
+
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+
+      transition:
+        background .35s ease,
+        color .35s ease,
+        transform .35s ease;
+    }
+
+    .sns-card:hover {
+      background: var(--brown-dark);
+      color: var(--white);
+
+      transform: translateY(-6px);
+    }
+
+    .sns-name {
+      font-family: Georgia, serif;
+      font-size: 28px;
+    }
+
+    .sns-handle {
+      font-size: 11px;
+      color: var(--brown-light);
+    }
+
+    .sns-card:hover .sns-handle {
+      color: #cdbba5;
+    }
+
+    .sns-arrow {
+      align-self: flex-end;
+      font-size: 20px;
+    }
+
+    /* =========================================
+       FOOTER
+    ========================================= */
+
+    footer {
+      padding: 50px 7vw;
+
+      background: #2a221d;
+      color: #bcae9e;
+
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    footer .brand {
+      color: var(--white);
+    }
+
+    footer p {
+      font-size: 10px;
+      letter-spacing: .12em;
+    }
+
+    /* =========================================
+       レスポンシブ
+    ========================================= */
+
+    @media (max-width: 900px) {
+
+      nav {
+        gap: 15px;
+      }
+
+      .hero {
+        grid-template-columns: 1fr;
+        padding-top: 150px;
+      }
+
+      .train-visual {
+        height: 330px;
+      }
+
+      .data-grid,
+      .sns-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+
+      header {
+        padding: 18px 5vw;
+      }
+
+      nav {
+        display: none;
+      }
+
+      section {
+        padding: 80px 6vw;
+      }
+
+      h1 {
+        font-size: 54px;
+      }
+
+      .train-card {
+        height: 230px;
+      }
+
+      .train-window {
+        top: 45px;
+        left: 35px;
+        right: 35px;
+        height: 80px;
+      }
+
+      .train-body-line {
+        top: 155px;
+      }
+
+      .news-item {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .news-tag {
+        justify-self: start;
+      }
+
+      .section-header {
+        display: block;
+      }
+
+      .section-description {
+        margin-top: 20px;
+      }
+
+      footer {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 20px;
+      }
+    }
+
+    /* =========================================
+       アクセシビリティ
+    ========================================= */
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ======================================
+       OPENING
+  ======================================= -->
+
+  <div id="opening">
+    <div class="opening-inner">
+
+      <div class="opening-line"></div>
+
+      <div class="opening-logo">
+        RAILWAY
+      </div>
+
+      <div class="opening-sub">
+        SIMULATOR PROJECT
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- ======================================
+       HEADER
+  ======================================= -->
+
+  <header>
+
+    <a href="#" class="brand">
+      <span class="brand-mark">RS</span>
+      RAILWAY SIMULATOR
+    </a>
+
+    <nav>
+      <a href="#news">NEWS</a>
+      <a href="#data">DATA</a>
+      <a href="#sns">SNS</a>
+    </nav>
+
+  </header>
+
+
+  <main>
+
+    <!-- ======================================
+         HERO
+    ======================================= -->
+
+    <section class="hero">
+
+      <div class="rail-background"></div>
+
+      <div class="hero-copy">
+
+        <div class="eyebrow">
+          RAILWAY SIMULATION PROJECT
+        </div>
+
+        <h1>
+          Ride.
+          <span>Drive.</span>
+          Create.
+        </h1>
+
+        <p class="hero-description">
+          鉄道をもっと身近に、もっとリアルに。<br>
+          車両・路線・運転を自由に楽しむ、
+          鉄道シミュレーターのためのプロジェクトサイトです。
+        </p>
+
+        <a href="#data" class="hero-button">
+          EXPLORE DATA
+          <span class="arrow">→</span>
+        </a>
+
+      </div>
+
+
+      <div class="train-visual">
+
+        <div class="train-card">
+
+          <div class="train-window"></div>
+
+          <div class="train-body-line"></div>
+
+          <div class="train-front"></div>
+
+          <div class="headlight"></div>
+
+          <div class="wheel one"></div>
+          <div class="wheel two"></div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+
+    <!-- ======================================
+         NEWS
+    ======================================= -->
+
+    <section class="news" id="news">
+
+      <div class="section-header">
+
+        <div>
+          <div class="section-number">01 / LATEST</div>
+          <h2 class="section-title">最新情報</h2>
+        </div>
+
+        <p class="section-description">
+          プロジェクトのアップデートや
+          新しい車両・路線などの情報をお知らせします。
+        </p>
+
+      </div>
+
+
+      <div class="news-list">
+
+        <a href="#" class="news-item">
+          <time class="news-date">2026.10.01</time>
+          <div class="news-title">
+            新しい車両データを公開しました
+          </div>
+          <span class="news-tag">UPDATE</span>
+        </a>
+
+        <a href="#" class="news-item">
+          <time class="news-date">2026.09.24</time>
+          <div class="news-title">
+            路線データ「○○線」を追加しました
+          </div>
+          <span class="news-tag">DATA</span>
+        </a>
+
+        <a href="#" class="news-item">
+          <time class="news-date">2026.09.12</time>
+          <div class="news-title">
+            鉄道シミュレーター Ver.1.2.0 を公開
+          </div>
+          <span class="news-tag">RELEASE</span>
+        </a>
+
+        <a href="#" class="news-item">
+          <time class="news-date">2026.08.30</time>
+          <div class="news-title">
+            公式SNSを開設しました
+          </div>
+          <span class="news-tag">INFO</span>
+        </a>
+
+      </div>
+
+    </section>
+
+
+    <!-- ======================================
+         DATA
+    ======================================= -->
+
+    <section class="data-section" id="data">
+
+      <div class="section-header">
+
+        <div>
+          <div class="section-number">02 / DATABASE</div>
+          <h2 class="section-title">データ一覧</h2>
+        </div>
+
+        <p class="section-description">
+          鉄道シミュレーターで使用できる
+          車両・路線・駅などのデータをご覧いただけます。
+        </p>
+
+      </div>
+
+
+      <div class="data-grid">
+
+        <a href="#" class="data-card">
+
+          <div class="data-icon">🚆</div>
+
+          <div>
+            <h3>車両データ</h3>
+            <p>
+              電車・気動車・機関車など、
+              シミュレーターで使用できる車両一覧。
+            </p>
+          </div>
+
+          <div class="data-arrow">↗</div>
+
+        </a>
+
+
+        <a href="#" class="data-card">
+
+          <div class="data-icon">▰</div>
+
+          <div>
+            <h3>路線データ</h3>
+            <p>
+              実在・架空を問わず、
+              シミュレーターで走行できる路線を掲載。
+            </p>
+          </div>
+
+          <div class="data-arrow">↗</div>
+
+        </a>
+
+
+        <a href="#" class="data-card">
+
+          <div class="data-icon">⌖</div>
+
+          <div>
+            <h3>駅データ</h3>
+            <p>
+              各路線に登場する駅や
+              周辺情報などをまとめています。
+            </p>
+          </div>
+
+          <div class="data-arrow">↗</div>
+
+        </a>
+
+      </div>
+
+    </section>
+
+
+    <!-- ======================================
+         SNS
+    ======================================= -->
+
+    <section id="sns">
+
+      <div class="section-header">
+
+        <div>
+          <div class="section-number">03 / SOCIAL</div>
+          <h2 class="section-title">SNS</h2>
+        </div>
+
+        <p class="section-description">
+          最新情報や開発状況などを
+          SNSでも発信しています。
+        </p>
+
+      </div>
+
+
+      <div class="sns-grid">
+
+        <a href="#" class="sns-card">
+
+          <div class="sns-name">X / Twitter</div>
+
+          <div>
+            <div class="sns-handle">@railway_sim</div>
+            <div class="sns-arrow">↗</div>
+          </div>
+
+        </a>
+
+
+        <a href="#" class="sns-card">
+
+          <div class="sns-name">YouTube</div>
+
+          <div>
+            <div class="sns-handle">RAILWAY SIMULATOR</div>
+            <div class="sns-arrow">↗</div>
+          </div>
+
+        </a>
+
+
+        <a href="#" class="sns-card">
+
+          <div class="sns-name">Discord</div>
+
+          <div>
+            <div class="sns-handle">COMMUNITY SERVER</div>
+            <div class="sns-arrow">↗</div>
+          </div>
+
+        </a>
+
+      </div>
+
+    </section>
+
+  </main>
+
+
+  <!-- ======================================
+       FOOTER
+  ======================================= -->
+
+  <footer>
+
+    <div class="brand">
+      <span class="brand-mark">RS</span>
+      RAILWAY SIMULATOR
+    </div>
+
+    <p>
+      © 2026 RAILWAY SIMULATOR PROJECT
+    </p>
+
+  </footer>
+
+
+  <script>
+    /*
+     * オープニング終了後、
+     * スクロール位置を先頭に戻します。
+     */
+
+    window.addEventListener("load", () => {
+      window.scrollTo(0, 0);
+    });
+
+
+    /*
+     * スクロール時にナビゲーションの
+     * 背景を少し変化させる演出
+     */
+
+    const header = document.querySelector("header");
+
+    window.addEventListener("scroll", () => {
+
+      if (window.scrollY > 30) {
+        header.style.background = "rgba(238, 228, 212, .94)";
+      } else {
+        header.style.background = "rgba(238, 228, 212, .78)";
+      }
+
+    });
+  </script>
+
+</body>
+</html>
