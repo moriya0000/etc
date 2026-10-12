@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BVE5 マップ生成ツール</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<style>
+body{margin:0;font:14px sans-serif}
+#m{height:55vh}
+#p{padding:8px}
+button,input{font-size:14px;margin:2px}
+input{width:60px}
+textarea{width:100%;height:28vh;box-sizing:border-box}
+</style></head><body>
+<div id="m"></div>
+<div id="p">
+<button id="undo">戻す</button><button id="clr">クリア</button><button id="go">生成</button><button id="dl">保存</button><button id="sc">駅CSV</button><br>
+刻み(m)<input id="st" type="number" value="10">
+平滑<input id="sm" type="number" value="3">
+最大半径<input id="mr" type="number" value="3000">
+<label><input type="checkbox" id="snap" checked style="width:auto">鉄道中心線にスナップ</label><br>
+路線名<input id="rn" style="width:110px" placeholder="例:中央本線">
+<button id="rs">検索</button>
+<select id="rl" style="max-width:100%"></select><br>
+開始km<input id="k0" type="number" value="0">終了km<input id="k1" type="number" placeholder="全線">
+<button id="rg">読込</button><button id="rev">向き反転</button><br>
+国土数値情報(RailroadSection と Station の .geojson)<input type="file" id="ksj" multiple accept=".geojson,.json">
+<div id="info">地図を線路沿いにタップして中心線を指定(カーブは細かく)</div>
+<div id="manual"></div>
+<div id="cvt"></div>
+<textarea id="out" readonly></textarea>
+</div>
+<script>
+const map=L.map('m').setView([35.68,139.77],12);
+L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxZoom:18,attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html">地理院タイル</a>'}).addTo(map);
+const pts=[],line=L.polyline([],{color:'red'}).addTo(map),mk=L.layerGroup().addTo(map);
+function redraw(){
+  line.setLatLngs(pts);mk.clearLayers();
+  if(pts.length<=300)pts.forEach(p=>L.circleMarker(p,{radius:3,color:'red'}).addTo(mk));
+  if(pts.length>1){
+    L.circleMarker(pts[0],{radius:6,color:'green'}).bindTooltip('始',{permanent:true}).addTo(mk);
+    L.circleMarker(pts[pts.length-1],{radius:6,color:'blue'}).bindTooltip('終',{permanent:true}).addTo(mk);
+  }
+}
+map.on('click',e=>{pts.push([e.latlng.lat,e.latlng.lng]);redraw()});
+undo.onclick=()=>{pts.pop();redraw()};
+clr.onclick=()=>{pts.length=0;redraw();out.value='';snapLine.setLatLngs([])};
+
+function resample(xy,step){
+  const r=[xy[0]];let a=xy[0],need=step;
+  for(let k=1;k<xy.length;k++){
+    const b=xy[k];let d=Math.hypot(b[0]-a[0],b[1]-a[1]);
+    while(d>=need){const t=need/d;a=[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];r.push(a);d=Math.hypot(b[0]-a[0],b[1]-a[1]);need=step}
+    need-=d;a=b;
+  }
+  return r;
+}
+function sm2(p,w){return p.map((_,i)=>{let sx=0,sy=0,n=0;for(let j=Math.max(0,i-w);j<=Math.min(p.length-1,i+w);j++){sx+=p[j][0];sy+=p[j][1];n++}return[sx/n,sy/n]})}
+function sm1(v,w){return v.map((_,i)=>{let s=0,n=0;for(let j=Math.max(0,i-w);j<=Math.min(v.length-1,i+w);j++){s+=v[j];n++}return s/n})}
+function runs(v,step,minRun){
+  const r=[];
+  v.forEach((x,i)=>{if(!r.length||r[r.length-1].val!==x)r.push({i,val:x,n:1});else r[r.length-1].n++});
+  for(let k=1;k<r.length;){
+    if(r[k].n<minRun){r[k-1].n+=r[k].n;r.splice(k,1);if(k<r.length&&r[k].val===r[k-1].val){r[k-1].n+=r[k].n;r.splice(k,1)}}
+    else k++;
+  }
+  return r.map(x=>({pos:Math.round(x.i*step),val:x.val}));
+}
+const tc={};
+function tile(z,x,y){
+  const k=z+'/'+x+'/'+y;
+  if(!tc[k])tc[k]=new Promise(res=>{
+    const im=new Image();im.crossOrigin='anonymous';
+    im.onload=()=>{const c=document.createElement('canvas');c.width=c.height=256;const g=c.getContext('2d',{willReadFrequently:true});g.drawImage(im,0,0);res(g.getImageData(0,0,256,256).data)};
+    im.onerror=()=>res(null);
+    im.src=`https://cyberjapandata.gsi.go.jp/xyz/dem_png/${z}/${x}/${y}.png`;
+  });
+  return tc[k];
+}
+async function elev(lat,lon){
+  const z=14,n=2**z,fx=(lon+180)/360*n,la=lat*Math.PI/180;
+  const fy=(1-Math.log(Math.tan(la)+1/Math.cos(la))/Math.PI)/2*n;
+  const tx=Math.floor(fx),ty=Math.floor(fy),d=await tile(z,tx,ty);
+  if(!d)return NaN;
+  const o=(Math.floor((fy-ty)*256)*256+Math.floor((fx-tx)*256))*4;
+  const v=d[o]*65536+d[o+1]*256+d[o+2];
+  return v===8388608?NaN:(v<8388608?v:v-16777216)*0.01;
+}
+const snapLine=L.polyline([],{color:'blue',weight:3}).addTo(map);
+const railTiles={};
+function railTile(x,y){
+  const k=x+'/'+y;
+  if(!railTiles[k])railTiles[k]=fetch(`https://cyberjapandata.gsi.go.jp/xyz/experimental_railcl/16/${x}/${y}.geojson`).then(r=>r.ok?r.json():{features:[]}).catch(()=>null);
+  return railTiles[k];
+}
+function t16(lat,lon){const n=65536,la=lat*Math.PI/180;return[(lon+180)/360*n,(1-Math.log(Math.tan(la)+1/Math.cos(la))/Math.PI)/2*n]}
+function dijkstra(adj,s,t){
+  const D=new Array(adj.length).fill(Infinity),prev=new Array(adj.length).fill(-1),h=[[0,s]];D[s]=0;
+  const push=x=>{h.push(x);let i=h.length-1;while(i>0){const p=(i-1)>>1;if(h[p][0]<=h[i][0])break;[h[p],h[i]]=[h[i],h[p]];i=p}};
+  const pop=()=>{const top=h[0],last=h.pop();if(h.length){h[0]=last;let i=0;for(;;){const l=2*i+1,r=l+1;let m=i;if(l<h.length&&h[l][0]<h[m][0])m=l;if(r<h.length&&h[r][0]<h[m][0])m=r;if(m===i)break;[h[m],h[i]]=[h[i],h[m]];i=m}}return top};
+  while(h.length){
+    const [d,u]=pop();if(d>D[u])continue;if(u===t)break;
+    for(const [v,w] of adj[u])if(d+w<D[v]){D[v]=d+w;prev[v]=u;push([D[v],v])}
+  }
+  if(t===undefined)return{D,prev};
+  if(D[t]===Infinity)return null;
+  const p=[];for(let u=t;u!==-1;u=prev[u])p.push(u);return p.reverse();
+}
+async function snapRoute(P){
+  const lat0=P[0][0],lon0=P[0][1],kx=111320*Math.cos(lat0*Math.PI/180),ky=110574;
+  const keys=new Set();
+  for(let i=0;i<P.length;i++){
+    const a=P[i],b=P[Math.min(i+1,P.length-1)];
+    const dm=Math.hypot((b[1]-a[1])*kx,(b[0]-a[0])*ky),n=Math.max(1,Math.ceil(dm/150));
+    for(let j=0;j<=n;j++){
+      const q=t16(a[0]+(b[0]-a[0])*j/n,a[1]+(b[1]-a[1])*j/n),tx=Math.floor(q[0]),ty=Math.floor(q[1]);
+      for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)keys.add((tx+dx)+'/'+(ty+dy));
+    }
+  }
+  if(keys.size>400)throw new Error('範囲が広すぎます');
+  const tiles=await Promise.all([...keys].map(k=>{const [x,y]=k.split('/');return railTile(x,y)}));
+  if(tiles.every(t=>t===null))throw new Error('タイルを取得できません');
+  const nodes=[],adj=[],grid=new Map(),segs=[];
+  const node=(lon,lat)=>{
+    const x=(lon-lon0)*kx,y=(lat-lat0)*ky,gx=Math.round(x/3),gy=Math.round(y/3);
+    for(let i=-1;i<=1;i++)for(let j=-1;j<=1;j++){const c=grid.get((gx+i)+','+(gy+j));if(c)for(const id of c)if(Math.hypot(nodes[id][0]-x,nodes[id][1]-y)<3)return id}
+    const id=nodes.length;nodes.push([x,y]);adj.push([]);
+    const k=gx+','+gy;if(!grid.has(k))grid.set(k,[]);grid.get(k).push(id);return id;
+  };
+  const edge=(a,b)=>{const d=Math.hypot(nodes[a][0]-nodes[b][0],nodes[a][1]-nodes[b][1]);adj[a].push([b,d]);adj[b].push([a,d])};
+  for(const t of tiles.filter(Boolean))for(const f of t.features||[]){
+    const g=f.geometry;if(!g)continue;
+    const ls=g.type==='LineString'?[g.coordinates]:g.type==='MultiLineString'?g.coordinates:[];
+    for(const l of ls){let prev=-1;for(const c of l){const id=node(c[0],c[1]);if(prev>=0&&id!==prev){edge(prev,id);segs.push([prev,id])}prev=id}}
+  }
+  if(!segs.length)throw new Error('鉄道中心線が見つかりません');
+  const ids=[];let miss=0;
+  for(const p of P){
+    const x=(p[1]-lon0)*kx,y=(p[0]-lat0)*ky;let best=1e18,bs=null,bq=null;
+    for(const [a,b] of segs){
+      const A=nodes[a],B=nodes[b],dx=B[0]-A[0],dy=B[1]-A[1],L2=dx*dx+dy*dy;
+      let u=L2?((x-A[0])*dx+(y-A[1])*dy)/L2:0;u=Math.max(0,Math.min(1,u));
+      const qx=A[0]+u*dx,qy=A[1]+u*dy,d=Math.hypot(x-qx,y-qy);
+      if(d<best){best=d;bs=[a,b];bq=[qx,qy]}
+    }
+    if(best>60){miss++;ids.push(null);continue}
+    const id=nodes.length;nodes.push(bq);adj.push([]);
+    for(const e of bs){const d=Math.hypot(bq[0]-nodes[e][0],bq[1]-nodes[e][1]);adj[id].push([e,d]);adj[e].push([id,d])}
+    ids.push(id);
+  }
+  const out=[],add=(x,y)=>out.push([lat0+y/ky,lon0+x/kx]);let fail=0;
+  for(let i=0;i<P.length;i++){
+    if(ids[i]===null){add((P[i][1]-lon0)*kx,(P[i][0]-lat0)*ky);continue}
+    if(i>0&&ids[i-1]!==null){
+      const path=dijkstra(adj,ids[i-1],ids[i]);
+      if(path){path.slice(1).forEach(n=>add(nodes[n][0],nodes[n][1]));continue}
+      fail++;
+    }
+    add(nodes[ids[i]][0],nodes[ids[i]][1]);
+  }
+  return{route:out,ok:ids.length-miss,fail};
+}
+let osmUsed=false,stations=[],lastStations=[],ksjSec=null,ksjSta=null,ksjLines=[],ksjUsed=false;
+const OVS=['https://overpass-api.de/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter','https://overpass.openstreetmap.fr/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+function ovManual(q,why){
+  return new Promise((res,rej)=>{
+    const enc=encodeURIComponent(q),d=document.getElementById('manual');
+    const u=OVS.map((o,i)=>`<a href="${o}?data=${enc}" target="_blank" rel="noopener">${i+1}</a>`).join(' ');
+    d.innerHTML=`<div>自動取得できません(${why})。次のリンクを順に新しいタブで開き(エラーが出たら次の番号へ): ${u} 。表示された内容を全選択してコピーし、下に貼り付けてください。</div><textarea id="mt" style="height:80px"></textarea><br><button id="mo">貼り付け完了</button><button id="mc">やめる</button>`;
+    document.getElementById('mo').onclick=()=>{
+      try{const e=JSON.parse(document.getElementById('mt').value).elements||[];d.innerHTML='';res(e)}
+      catch(x){info.textContent='JSONを読み取れません。内容を全部コピーできているか確認してください'}
+    };
+    document.getElementById('mc').onclick=()=>{d.innerHTML='';rej(new Error('中止しました'))};
+  });
+}
+async function ov(q){
+  let err;
+  for(const u of OVS){
+    try{
+      const r=await fetch(u+'?data='+encodeURIComponent(q),{signal:AbortSignal.timeout(30000)});
+      if(r.ok)return(await r.json()).elements||[];
+      err=new Error('HTTP '+r.status);
+    }catch(e){err=e}
+  }
+  return ovManual(q,err.message);
+}
+rs.onclick=async()=>{
+  const n=rn.value.trim().replace(/[\\"]/g,'');
+  if(!n){info.textContent='路線名を入力してください';return}
+  if(ksjSec){ksjSearch(n);return}
+  info.textContent='検索中…';rl.innerHTML='';
+  try{
+    const all=await ov(`[out:json];relation["route"]["name"~"${n}"](24,122,46,146);out tags;`);
+    const els=all.filter(e=>['train','light_rail','subway','tram','monorail'].includes(e.tags&&e.tags.route));
+    if(!els.length){info.textContent='見つかりません';return}
+    els.slice(0,40).forEach(e=>{const t=e.tags,o=document.createElement('option');o.value=e.id;o.textContent=`${t.name}${t.from?' '+t.from+'→'+t.to:''}${t.operator?' ['+t.operator+']':''} #${e.id}`;rl.appendChild(o)});
+    info.textContent=`${Math.min(els.length,40)}件。選んで「読込」`;
+  }catch(e){info.textContent='検索失敗: '+e.message}
+};
+rg.onclick=async()=>{
+  if(!rl.value){info.textContent='先に検索してください';return}
+  if(rl.value.startsWith('k:')){ksjLoad(ksjLines[+rl.value.slice(2)]);return}
+  info.textContent='路線を取得中…';
+  try{
+    const els=await ov(`[out:json][timeout:90];relation(${rl.value});(way(r);node(r););out geom;`);
+    const RT=['rail','light_rail','subway','tram','narrow_gauge','monorail'];
+    const f=els.find(w=>w.geometry&&w.geometry.length);
+    if(!f)throw new Error('線路データなし');
+    const kx=111320*Math.cos(f.geometry[0].lat*Math.PI/180);
+    const idx=new Map(),P=[],adj=[];
+    const nd=(id,g)=>{if(!idx.has(id)){idx.set(id,P.length);P.push([g.lat,g.lon]);adj.push([])}return idx.get(id)};
+    for(const w of els){
+      if(w.type!=='way'||!w.geometry||!w.tags||!RT.includes(w.tags.railway)||['siding','yard'].includes(w.tags.service))continue;
+      let prev=-1;
+      w.nodes.forEach((id,i)=>{
+        const a=nd(id,w.geometry[i]);
+        if(prev>=0&&a!==prev){const d=Math.hypot((P[a][1]-P[prev][1])*kx,(P[a][0]-P[prev][0])*110574);adj[a].push([prev,d]);adj[prev].push([a,d])}
+        prev=a;
+      });
+    }
+    if(P.length<2)throw new Error('線路データなし');
+    const comp=new Array(P.length).fill(-1),sz=[];
+    for(let s=0;s<P.length;s++){
+      if(comp[s]>=0)continue;
+      const c=sz.length;let n=0;const st=[s];comp[s]=c;
+      while(st.length){const u=st.pop();n++;for(const [v] of adj[u])if(comp[v]<0){comp[v]=c;st.push(v)}}
+      sz.push(n);
+    }
+    const s0=comp.indexOf(sz.indexOf(Math.max(...sz)));
+    const far=s=>{const r=dijkstra(adj,s);let b=s;r.D.forEach((d,i)=>{if(d!==Infinity&&d>r.D[b])b=i});return b};
+    const A=far(s0),B=far(A),path=dijkstra(adj,A,B);
+    let pl=path.map(i=>P[i]);const cum=[0];
+    for(let i=1;i<pl.length;i++)cum.push(cum[i-1]+Math.hypot((pl[i][1]-pl[i-1][1])*kx,(pl[i][0]-pl[i-1][0])*110574));
+    const a=(+k0.value||0)*1000,b=k1.value===''?Infinity:+k1.value*1000;
+    pl=pl.filter((_,i)=>cum[i]>=a&&cum[i]<=b);
+    if(pl.length<2)throw new Error('指定区間が空です');
+    pts.length=0;pts.push(...pl);redraw();snapLine.setLatLngs([]);snap.checked=false;osmUsed=true;
+    const seen=new Set();stations=[];
+    for(const e of els){
+      const t=e.tags;
+      if(e.type!=='node'||!t||!t.name||seen.has(t.name))continue;
+      if(!(['station','halt','stop','tram_stop'].includes(t.railway)||['stop_position','station','platform'].includes(t.public_transport)))continue;
+      seen.add(t.name);stations.push({name:t.name,lat:e.lat,lon:e.lon});
+    }
+    map.fitBounds(L.latLngBounds(pl));
+    const tot=cum[cum.length-1];
+    info.textContent=`全長 ${(tot/1000).toFixed(1)} km 中 ${((Math.min(b,tot)-a)/1000).toFixed(1)} km を読込(駅${stations.length}件)。「生成」で出力(路線形状: © OpenStreetMap contributors)`;
+  }catch(e){info.textContent='読込失敗: '+e.message}
+};
+ksj.onchange=async()=>{
+  try{
+    for(const f of ksj.files){
+      const feats=JSON.parse(await f.text()).features||[];
+      if(/Station/i.test(f.name))ksjSta=feats;
+      else if(/RailroadSection/i.test(f.name))ksjSec=feats;
+    }
+    info.textContent=ksjSec?`国土数値情報を読み込みました(路線区間${ksjSec.length}、駅${ksjSta?ksjSta.length:0})。路線名を検索できます`:'RailroadSection の geojson が見つかりません';
+  }catch(e){info.textContent='ファイルを読めません: '+e.message}
+};
+function ksjSearch(n){
+  rl.innerHTML='';
+  const m=new Map();
+  ksjSec.forEach(f=>{const p=f.properties||{};if(p.N02_003&&p.N02_003.includes(n))m.set(p.N02_003+'\t'+p.N02_004,[p.N02_003,p.N02_004])});
+  ksjLines=[...m.values()];
+  ksjLines.slice(0,60).forEach((a,i)=>{const o=document.createElement('option');o.value='k:'+i;o.textContent=`${a[0]} [${a[1]}]`;rl.appendChild(o)});
+  info.textContent=ksjLines.length?`${Math.min(ksjLines.length,60)}件(国土数値情報)。選んで「読込」`:'見つかりません';
+}
+function finish(P,adj,kx,label){
+  const comp=new Array(P.length).fill(-1),sz=[];
+  for(let s=0;s<P.length;s++){
+    if(comp[s]>=0)continue;
+    const c=sz.length;let n=0;const st=[s];comp[s]=c;
+    while(st.length){const u=st.pop();n++;for(const [v] of adj[u])if(comp[v]<0){comp[v]=c;st.push(v)}}
+    sz.push(n);
+  }
+  const s0=comp.indexOf(sz.indexOf(Math.max(...sz)));
+  const far=s=>{const r=dijkstra(adj,s);let b=s;r.D.forEach((d,i)=>{if(d!==Infinity&&d>r.D[b])b=i});return b};
+  const A=far(s0),B=far(A),path=dijkstra(adj,A,B);
+  let pl=path.map(i=>P[i]);const cum=[0];
+  for(let i=1;i<pl.length;i++)cum.push(cum[i-1]+Math.hypot((pl[i][1]-pl[i-1][1])*kx,(pl[i][0]-pl[i-1][0])*110574));
+  const a=(+k0.value||0)*1000,b=k1.value===''?Infinity:+k1.value*1000;
+  pl=pl.filter((_,i)=>cum[i]>=a&&cum[i]<=b);
+  if(pl.length<2)throw new Error('指定区間が空です');
+  pts.length=0;pts.push(...pl);redraw();snapLine.setLatLngs([]);snap.checked=false;
+  map.fitBounds(L.latLngBounds(pl));
+  const tot=cum[cum.length-1];
+  info.textContent=`全長 ${(tot/1000).toFixed(1)} km 中 ${((Math.min(b,tot)-a)/1000).toFixed(1)} km を読込(駅${stations.length}件)。「生成」で出力(${label})`;
+}
+function ksjLoad(a){
+  try{
+    const lines=[];
+    for(const f of ksjSec){
+      const p=f.properties||{},g=f.geometry;
+      if(!g||p.N02_003!==a[0]||p.N02_004!==a[1])continue;
+      (g.type==='LineString'?[g.coordinates]:g.type==='MultiLineString'?g.coordinates:[]).forEach(l=>lines.push(l));
+    }
+    if(!lines.length)throw new Error('線路データなし');
+    const lon1=lines[0][0][0],lat1=lines[0][0][1],kx=111320*Math.cos(lat1*Math.PI/180);
+    const nodes=[],P=[],adj=[],grid=new Map();
+    const nd=(lon,lat)=>{
+      const x=(lon-lon1)*kx,y=(lat-lat1)*110574,gx=Math.round(x/3),gy=Math.round(y/3);
+      for(let i=-1;i<=1;i++)for(let j=-1;j<=1;j++){const c=grid.get((gx+i)+','+(gy+j));if(c)for(const id of c)if(Math.hypot(nodes[id][0]-x,nodes[id][1]-y)<3)return id}
+      const id=nodes.length;nodes.push([x,y]);P.push([lat,lon]);adj.push([]);
+      const k=gx+','+gy;if(!grid.has(k))grid.set(k,[]);grid.get(k).push(id);return id;
+    };
+    for(const l of lines){
+      let prev=-1;
+      for(const c of l){
+        const q=nd(c[0],c[1]);
+        if(prev>=0&&q!==prev){const d=Math.hypot(nodes[q][0]-nodes[prev][0],nodes[q][1]-nodes[prev][1]);adj[q].push([prev,d]);adj[prev].push([q,d])}
+        prev=q;
+      }
+    }
+    const seen=new Set();stations=[];
+    for(const f of ksjSta||[]){
+      const p=f.properties||{},g=f.geometry;
+      if(!g||p.N02_003!==a[0]||p.N02_004!==a[1]||!p.N02_005||seen.has(p.N02_005))continue;
+      const cs=g.type==='LineString'?g.coordinates:g.type==='MultiLineString'?g.coordinates.flat():[];
+      if(!cs.length)continue;
+      let sx=0,sy=0;cs.forEach(c=>{sx+=c[0];sy+=c[1]});
+      seen.add(p.N02_005);stations.push({name:p.N02_005,lon:sx/cs.length,lat:sy/cs.length});
+    }
+    osmUsed=false;ksjUsed=true;
+    finish(P,adj,kx,'国土数値情報');
+  }catch(e){info.textContent='読込失敗: '+e.message}
+}
+rev.onclick=()=>{pts.reverse();redraw()};
+let cvs=[],geo=null,gzList=[],stList=[],totalLen=0,lastSnapMsg='';
+const cvLayer=L.layerGroup().addTo(map);
+function hAt(pos){
+  const hs=geo.hs,f=Math.max(0,Math.min(hs.length-1,pos/geo.step-0.5)),i=Math.floor(f),t=f-i;
+  return hs[i]*(1-t)+hs[Math.min(hs.length-1,i+1)]*t;
+}
+function calcR(s,e){
+  if(!geo||e<=s)return 0;
+  const dth=hAt(e+geo.m)-hAt(s-geo.m);
+  if(Math.abs(dth)<1e-4)return 0;
+  return Math.round((e-s)/dth/5)*5;
+}
+function posLL(pos){
+  const rs=geo.rs,n=rs.length,f=Math.max(0,Math.min(n-1,pos/geo.step)),i=Math.min(n-2,Math.floor(f)),t=f-i;
+  const x=rs[i][0]*(1-t)+rs[i+1][0]*t,y=rs[i][1]*(1-t)+rs[i+1][1]*t;
+  return[geo.lat0+y/geo.ky,geo.lon0+x/geo.kx];
+}
+function detectCurves(ks,step,maxR){
+  const thr=1/maxR,gap=Math.ceil(20/step)+1,r0=[];
+  ks.forEach((x,i)=>{
+    const sg=x>thr?1:x<-thr?-1:0;if(!sg)return;
+    const r=r0[r0.length-1];
+    if(r&&r.sg===sg&&i-r.i1<=gap)r.i1=i;else r0.push({sg,i0:i,i1:i});
+  });
+  const res=[];
+  for(const r of r0){
+    const v=[];for(let i=r.i0;i<=r.i1;i++)v.push(Math.abs(ks[i]));
+    const sv=[...v].sort((a,b)=>a-b),th=0.5*sv[Math.floor(sv.length*0.9)];
+    let a=r.i0,b=r.i1;
+    while(a<b&&Math.abs(ks[a])<th)a++;
+    while(b>a&&Math.abs(ks[b])<th)b--;
+    const A=v=>Math.abs(ks[v]);
+    let s0=(a+1)*step,e0=(b+1)*step;
+    if(a>0&&A(a)>A(a-1))s0=a*step+step*Math.max(0,Math.min(1,(th-A(a-1))/(A(a)-A(a-1))));
+    if(b<ks.length-1&&A(b)>A(b+1))e0=(b+1)*step+step*Math.max(0,Math.min(1,(A(b)-th)/(A(b)-A(b+1))));
+    const s=Math.max(0,Math.round(s0)),e=Math.round(e0);
+    if(e-s<30)continue;
+    let dth=0;for(let i=r.i0;i<=r.i1;i++)dth+=ks[i]*step;
+    const R=Math.abs(dth)<1e-4?0:Math.round((e-s)/dth/5)*5;
+    if(!R||Math.abs(R)>maxR)continue;
+    res.push({s,e,R,Ri:R});
+  }
+  res.forEach((c,i)=>{
+    const near=Math.min(i>0?c.s-res[i-1].e:1e9,i<res.length-1?res[i+1].s-c.e:1e9);
+    if(near>=geo.m){const R2=calcR(c.s,c.e);if(R2&&Math.abs(R2)<=maxR)c.R=R2}
+    delete c.Ri;
+  });
+  return res;
+}
+function renderCv(){
+  cvLayer.clearLayers();
+  const t=document.getElementById('cvt');
+  if(!geo){t.innerHTML='';return}
+  cvs.sort((a,b)=>a.s-b.s);
+  let h='<details open><summary>カーブ一覧(始点・終点を直すと半径を自動で再計算)</summary><table><tr><th>#</th><th>始点m</th><th>終点m</th><th>半径m</th><th></th></tr>';
+  cvs.forEach((c,i)=>{h+=`<tr><td>${i+1}</td><td><input data-i="${i}" data-f="s" type="number" value="${c.s}"></td><td><input data-i="${i}" data-f="e" type="number" value="${c.e}"></td><td><input data-i="${i}" data-f="R" type="number" value="${c.R}"></td><td><button data-del="${i}">×</button></td></tr>`});
+  h+='</table><button id="cadd">カーブ追加</button></details>';
+  t.innerHTML=h;
+  document.getElementById('cadd').onclick=()=>{cvs.push({s:0,e:0,R:0});renderCv()};
+  t.querySelectorAll('input').forEach(el=>el.onchange=()=>{
+    const c=cvs[+el.dataset.i],f=el.dataset.f;
+    c[f]=+el.value;
+    if(f!=='R')c.R=calcR(c.s,c.e);
+    renderCv();emit();
+  });
+  t.querySelectorAll('button[data-del]').forEach(b=>b.onclick=()=>{cvs.splice(+b.dataset.del,1);renderCv();emit()});
+  cvs.forEach((c,i)=>{
+    if(c.e>c.s){
+      L.circleMarker(posLL(c.s),{radius:5,color:'#0a0'}).bindTooltip(`C${i+1}始`,{permanent:true}).addTo(cvLayer);
+      L.circleMarker(posLL(c.e),{radius:5,color:'#d00'}).bindTooltip(`C${i+1}終`).addTo(cvLayer);
+    }
+  });
+}
+function emit(){
+  const ev={},add=(p,s)=>(ev[p]??=[]).push(s);
+  const ok=cvs.filter(c=>c.R&&c.e>c.s).sort((a,b)=>a.s-b.s);
+  ok.forEach(c=>{add(c.s,`Curve.Begin(${c.R}, 0);`);add(c.e,'Curve.End();')});
+  gzList.forEach(g=>add(g.pos,`Gradient.Begin(${g.val.toFixed(1)});`));
+  stList.forEach(s=>add(s.pos,'// 駅: '+s.name));
+  let s='BveTs Map 2.02:utf-8\n\n// 標高: 国土地理院'+(osmUsed?' / 路線形状: OpenStreetMap contributors (ODbL)':'')+(ksjUsed&&!osmUsed?' / 路線形状・駅: 国土数値情報(鉄道データ、国土交通省)':'')+'\n\n';
+  Object.keys(ev).map(Number).sort((a,b)=>a-b).forEach(p=>{s+=`${p};\n${ev[p].join('\n')}\n\n`});
+  s+=`${totalLen};\n`;
+  out.value=s;
+  const rr=ok.map(c=>Math.abs(c.R));
+  info.textContent=lastSnapMsg+`延長 ${totalLen} m / カーブ ${ok.length} / 最小半径 ${rr.length?Math.min(...rr)+' m':'なし'} / 勾配区間 ${gzList.length} / 駅 ${stList.length}`;
+}
+go.onclick=async()=>{
+  if(pts.length<2){info.textContent='2点以上指定してください';return}
+  const step=+st.value||10,w=+sm.value||3,maxR=+mr.value||3000;
+  let route=pts,snapMsg='';
+  if(snap.checked){
+    info.textContent='鉄道中心線を取得中…';
+    try{const r=await snapRoute(pts);route=r.route;snapMsg=`スナップ ${r.ok}/${pts.length}点${r.fail?'、経路なし'+r.fail+'区間':''} / `}
+    catch(e){snapMsg='スナップ失敗('+e.message+')・手動の点列で計算 / '}
+  }
+  snapLine.setLatLngs(route===pts?[]:route);
+  info.textContent='計算中…';
+  const lat0=route[0][0],lon0=route[0][1],kx=111320*Math.cos(lat0*Math.PI/180),ky=110574;
+  const xy=route.map(p=>[(p[1]-lon0)*kx,(p[0]-lat0)*ky]);
+  const rs=sm2(resample(xy,step),w);
+  const n=rs.length;
+  // 曲線
+  const dstep=5,dw=Math.max(1,Math.round(w*step/dstep)),rd=sm2(resample(xy,dstep),dw),nd=rd.length;
+  const h=[];for(let i=0;i<nd-1;i++)h.push(Math.atan2(rd[i+1][0]-rd[i][0],rd[i+1][1]-rd[i][1]));
+  const k=h.slice(1).map((x,i)=>{let d=x-h[i];while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d/dstep});
+  const ks=sm1(k,6);
+  const hu=[h[0]];
+  for(let i=1;i<h.length;i++){let d=h[i]-h[i-1];while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;hu.push(hu[i-1]+d)}
+  geo={step:dstep,hs:hu,m:(dw+1.5)*dstep,rs:rd,lat0,lon0,kx,ky};
+  cvs=detectCurves(ks,dstep,maxR);
+  // 勾配
+  const el=[];let last=0;
+  for(const p of rs){let e=await elev(lat0+p[1]/ky,lon0+p[0]/kx);if(isNaN(e))e=last;el.push(e);last=e}
+  const L=Math.max(1,Math.round(100/step)),es=sm1(el,Math.max(1,Math.round(50/step)));
+  const gr=[];
+  for(let i=0;i<n;i++){const j=Math.min(n-1,i+L),i0=Math.max(0,j-L);gr.push(Math.round((es[j]-es[i0])/((j-i0)*step)*1000*2)/2+0)}
+  const gz=runs(gr,step,Math.ceil(100/step));
+  gzList=gz;lastSnapMsg=snapMsg;
+  const st2=[];
+  for(const s of stations){
+    const sx=(s.lon-lon0)*kx,sy=(s.lat-lat0)*ky;let best=1e18,pos=0;
+    for(let i=0;i<n-1;i++){
+      const A=rs[i],B=rs[i+1],dx=B[0]-A[0],dy=B[1]-A[1],L2=dx*dx+dy*dy;
+      let u=L2?((sx-A[0])*dx+(sy-A[1])*dy)/L2:0;u=Math.max(0,Math.min(1,u));
+      const d=Math.hypot(sx-A[0]-u*dx,sy-A[1]-u*dy);
+      if(d<best){best=d;pos=(i+u)*step}
+    }
+    if(best<80)st2.push({name:s.name,pos:Math.round(pos)});
+  }
+  st2.sort((a,b)=>a.pos-b.pos);lastStations=st2;
+  stList=st2;totalLen=Math.round((nd-1)*dstep);
+  renderCv();emit();
+};
+sc.onclick=()=>{
+  if(!lastStations.length){info.textContent='駅がありません(路線を読込み、「生成」した後に押してください)';return}
+  const q=s=>'"'+s.replace(/"/g,'""')+'"';
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\ufeff駅名,距離程(m)\n'+lastStations.map(s=>q(s.name)+','+s.pos).join('\n')],{type:'text/csv'}));
+  a.download='stations.csv';a.click();
+};
+dl.onclick=()=>{
+  if(!out.value)return;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([out.value],{type:'text/plain'}));
+  a.download='route.txt';a.click();
+};
+</script></body></html>
